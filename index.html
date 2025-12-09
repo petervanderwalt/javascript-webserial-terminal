@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Serial Terminal</title>
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+
+    <!-- Xterm.js CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        background-color: #f8f9fa;
+      }
+      #app-container {
+        flex: 1 1 auto;
+        display: flex;
+        overflow: hidden;
+      }
+      #sidebar {
+        flex: 0 0 350px;
+        background-color: #e9ecef;
+        padding: 1.5rem;
+        overflow-y: auto;
+        border-right: 1px solid #dee2e6;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      #main-content {
+        flex: 1 1 auto;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        background-color: #1e1e1e; /* Dark background for terminal area */
+        overflow: hidden;
+      }
+
+      /* Terminal Container */
+      #terminal-container {
+        flex-grow: 1;
+        position: relative;
+        overflow: hidden;
+        border-radius: 4px;
+      }
+
+      /* Input Area at bottom */
+      #input-area {
+        margin-top: 1rem;
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      /* Custom scrollbar for sidebar */
+      #sidebar::-webkit-scrollbar {
+        width: 8px;
+      }
+      #sidebar::-webkit-scrollbar-thumb {
+        background-color: #adb5bd;
+        border-radius: 4px;
+      }
+
+      .status-dot {
+        height: 10px;
+        width: 10px;
+        background-color: #bbb;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 5px;
+      }
+      .status-connected { background-color: #198754; }
+      .status-disconnected { background-color: #dc3545; }
+    </style>
+</head>
+<body>
+
+    <!-- Top Navigation Bar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark flex-shrink-0">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="bi bi-terminal-fill me-2"></i>Web Serial Terminal
+            </a>
+            <span class="navbar-text text-light small" id="connection-status">
+                <span class="status-dot status-disconnected" id="status-dot"></span>
+                <span id="status-text">Disconnected</span>
+            </span>
+        </div>
+    </nav>
+
+    <!-- Main Application Container -->
+    <div id="app-container">
+
+        <!-- Sidebar for Controls -->
+        <div id="sidebar">
+
+            <!-- Connection Card -->
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title border-bottom pb-2 mb-3">Connection</h5>
+
+                    <div class="mb-3">
+                        <label for="baudRate" class="form-label small fw-bold">Baud Rate</label>
+                        <select id="baudRate" class="form-select form-select-sm">
+                            <option value="9600">9600</option>
+                            <option value="19200">19200</option>
+                            <option value="38400">38400</option>
+                            <option value="57600">57600</option>
+                            <option value="74880">74880 (ESP Boot)</option>
+                            <option value="115200" selected>115200</option>
+                            <option value="230400">230400</option>
+                            <option value="460800">460800</option>
+                            <option value="921600">921600</option>
+                        </select>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button id="btn-connect" class="btn btn-primary"><i class="bi bi-usb-plug-fill"></i> Connect</button>
+                        <button id="btn-disconnect" class="btn btn-danger" style="display: none;"><i class="bi bi-x-circle-fill"></i> Disconnect</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Terminal Settings Card -->
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title border-bottom pb-2 mb-3">Terminal Settings</h5>
+
+                    <div class="mb-3">
+                        <label for="lineEnding" class="form-label small fw-bold">Send Line Ending</label>
+                        <select id="lineEnding" class="form-select form-select-sm">
+                            <option value="">None</option>
+                            <option value="\n">LF (\n)</option>
+                            <option value="\r">CR (\r)</option>
+                            <option value="\r\n" selected>CR + LF (\r\n)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="localEcho">
+                        <label class="form-check-label small" for="localEcho">Local Echo</label>
+                    </div>
+
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="autoScroll" checked>
+                        <label class="form-check-label small" for="autoScroll">Auto Scroll</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions Card -->
+             <div class="card shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title border-bottom pb-2 mb-3">Actions</h5>
+                    <div class="d-grid gap-2">
+                        <button id="btn-clear" class="btn btn-secondary btn-sm"><i class="bi bi-eraser-fill"></i> Clear Terminal</button>
+                        <button id="btn-reset" class="btn btn-warning btn-sm"><i class="bi bi-bootstrap-reboot"></i> Reset Device (DTR/RTS)</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Main Content (Terminal) -->
+        <div id="main-content">
+            <div id="terminal-container"></div>
+
+            <div id="input-area">
+                <input type="text" id="term-input" class="form-control" placeholder="Type command and press Enter..." disabled>
+                <button id="btn-send" class="btn btn-primary" disabled><i class="bi bi-send-fill"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <!-- Bootstrap -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Xterm.js -->
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.js"></script>
+
+    <script>
+        // --- Web Serial API & Terminal Logic ---
+
+        let port;
+        let reader;
+        let inputDone;
+        let outputDone;
+        let outputStream;
+        let term;
+        let fitAddon;
+        let isConnected = false;
+
+        const btnConnect = document.getElementById('btn-connect');
+        const btnDisconnect = document.getElementById('btn-disconnect');
+        const btnClear = document.getElementById('btn-clear');
+        const btnReset = document.getElementById('btn-reset');
+        const btnSend = document.getElementById('btn-send');
+        const termInput = document.getElementById('term-input');
+        const baudRateSelect = document.getElementById('baudRate');
+        const lineEndingSelect = document.getElementById('lineEnding');
+        const localEchoCheckbox = document.getElementById('localEcho');
+        const autoScrollCheckbox = document.getElementById('autoScroll');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+
+        // Check if Web Serial is supported
+        if ("serial" in navigator) {
+
+            // Listen for device disconnection (unplugged)
+            navigator.serial.addEventListener("disconnect", (event) => {
+                // If the device being disconnected is the one we are connected to
+                if (port && port === event.target) {
+                    term.writeln('\x1b[31mDevice physically disconnected.\x1b[0m');
+                    disconnect(true); // Force disconnect handling
+                }
+            });
+
+        } else {
+            alert("Web Serial API is not supported in this browser. Please use Chrome, Edge, or Opera.");
+        }
+
+        // Initialize Terminal
+        function initTerminal() {
+            term = new Terminal({
+                cursorBlink: true,
+                convertEol: true,
+                fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+                fontSize: 14,
+                theme: {
+                    background: '#1e1e1e',
+                    foreground: '#f0f0f0'
+                }
+            });
+
+            fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.loadAddon(new WebLinksAddon.WebLinksAddon());
+
+            term.open(document.getElementById('terminal-container'));
+            fitAddon.fit();
+
+            // Handle sending raw characters from terminal
+            term.onData(async (data) => {
+                if (outputStream) {
+                    try {
+                        const writer = outputStream.getWriter();
+                        await writer.write(data);
+                        writer.releaseLock();
+                        if (localEchoCheckbox.checked) {
+                            term.write(data);
+                        }
+                    } catch (e) {
+                        console.error('Error writing to stream:', e);
+                    }
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                fitAddon.fit();
+            });
+        }
+
+        document.addEventListener('DOMContentLoaded', initTerminal);
+
+        // --- Connection Handling ---
+
+        async function connect() {
+            try {
+                port = await navigator.serial.requestPort();
+
+                const baudRate = parseInt(baudRateSelect.value);
+                await port.open({ baudRate: baudRate });
+
+                updateUIState(true);
+
+                const textDecoder = new TextDecoderStream();
+                inputDone = port.readable.pipeTo(textDecoder.writable);
+                reader = textDecoder.readable.getReader();
+
+                const textEncoder = new TextEncoderStream();
+                outputDone = textEncoder.readable.pipeTo(port.writable);
+                outputStream = textEncoder.writable;
+
+                readLoop();
+
+            } catch (err) {
+                console.error("Connection error:", err);
+                term.writeln('\x1b[31mError: ' + err.message + '\x1b[0m');
+                updateUIState(false);
+            }
+        }
+
+        async function disconnect(forced = false) {
+            // Close reader
+            if (reader) {
+                try {
+                    await reader.cancel();
+                    await inputDone.catch(() => {});
+                } catch (e) { /* Ignore errors on forced disconnect */ }
+                reader = null;
+                inputDone = null;
+            }
+
+            // Close writer
+            if (outputStream) {
+                try {
+                    await outputStream.close();
+                    await outputDone;
+                } catch (e) { /* Ignore errors on forced disconnect */ }
+                outputStream = null;
+                outputDone = null;
+            }
+
+            // Close port
+            if (port) {
+                try {
+                    await port.close();
+                } catch (e) {
+                    console.log("Port close error (expected if unplugged):", e);
+                }
+                port = null;
+            }
+
+            updateUIState(false);
+            if (!forced) {
+                term.writeln('\x1b[33mDisconnected\x1b[0m');
+            }
+        }
+
+        async function readLoop() {
+            while (true) {
+                try {
+                    const { value, done } = await reader.read();
+                    if (done) {
+                        reader.releaseLock();
+                        break;
+                    }
+                    if (value) {
+                        term.write(value);
+                        if (autoScrollCheckbox.checked) {
+                            term.scrollToBottom();
+                        }
+                    }
+                } catch (error) {
+                    // This is where "NetworkError" is caught when unplugged
+                    console.error("Read error: " + error);
+                    term.writeln('\r\n\x1b[31mConnection lost (Device Unplugged?)\x1b[0m');
+                    disconnect(true);
+                    break;
+                }
+            }
+        }
+
+        async function writeToStream(line) {
+            if (!outputStream) return;
+
+            try {
+                const writer = outputStream.getWriter();
+                const lineEnding = lineEndingSelect.value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+                const dataToSend = line + lineEnding;
+
+                if (localEchoCheckbox.checked) {
+                    term.writeln(line);
+                }
+
+                await writer.write(dataToSend);
+                writer.releaseLock();
+            } catch (e) {
+                console.error("Write error:", e);
+                term.writeln('\x1b[31mWrite Error\x1b[0m');
+                // Force disconnect if write fails drastically
+                disconnect(true);
+            }
+        }
+
+        async function resetDevice() {
+            if (!port) return;
+            term.writeln('\x1b[33mResetting device...\x1b[0m');
+            try {
+                await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+                await new Promise(resolve => setTimeout(resolve, 100));
+                await port.setSignals({ dataTerminalReady: true, requestToSend: false });
+            } catch (e) {
+                console.error(e);
+                term.writeln('\x1b[31mReset failed\x1b[0m');
+            }
+        }
+
+        // --- UI Updates ---
+
+        function updateUIState(connected) {
+            isConnected = connected;
+            if (connected) {
+                btnConnect.style.display = 'none';
+                btnDisconnect.style.display = 'block';
+                statusDot.classList.remove('status-disconnected');
+                statusDot.classList.add('status-connected');
+                statusText.textContent = 'Connected';
+
+                termInput.disabled = false;
+                btnSend.disabled = false;
+                baudRateSelect.disabled = true;
+                term.focus();
+            } else {
+                btnConnect.style.display = 'block';
+                btnDisconnect.style.display = 'none';
+                statusDot.classList.remove('status-connected');
+                statusDot.classList.add('status-disconnected');
+                statusText.textContent = 'Disconnected';
+
+                termInput.disabled = true;
+                btnSend.disabled = true;
+                baudRateSelect.disabled = false;
+            }
+        }
+
+        // --- Event Listeners ---
+
+        btnConnect.addEventListener('click', connect);
+        btnDisconnect.addEventListener('click', () => disconnect(false));
+        btnClear.addEventListener('click', () => term.clear());
+        btnReset.addEventListener('click', resetDevice);
+
+        btnSend.addEventListener('click', () => {
+            const data = termInput.value;
+            writeToStream(data);
+            termInput.value = '';
+        });
+
+        termInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                const data = termInput.value;
+                writeToStream(data);
+                termInput.value = '';
+            }
+        });
+
+    </script>
+</body>
+</html>
